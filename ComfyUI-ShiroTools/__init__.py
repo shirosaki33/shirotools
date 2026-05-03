@@ -14,7 +14,7 @@ class ShiroImageDelay:
             "required": {
                 "image": ("IMAGE",),
                 "delay_seconds": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 3600.0, "step": 0.5}),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
                 "always_run": ("BOOLEAN", {"default": True}),
             }
         }
@@ -47,7 +47,7 @@ class ShiroPassthroughDelay:
             "required": {
                 "anything": ("*",),
                 "delay_seconds": ("FLOAT", {"default": 5.0, "min": 0.0, "max": 3600.0, "step": 0.5}),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
                 "always_run": ("BOOLEAN", {"default": True}),
             }
         }
@@ -254,7 +254,7 @@ class ShiroMotionDeStutterLoopCleaner:
                 "protected_end_frames": ("INT", {"default": 2, "min": 0, "max": 999999, "step": 1}),
                 "max_frames_to_drop": ("INT", {"default": 3, "min": 0, "max": 999999, "step": 1}),
                 "max_consecutive_drops": ("INT", {"default": 2, "min": 1, "max": 16, "step": 1}),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
             }
         }
 
@@ -345,13 +345,13 @@ class ShiroBoundaryDeStutterLoopCleaner:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "low_motion_ratio": ("FLOAT", {"default": 0.60, "min": 0.0, "max": 3.0, "step": 0.05}),
-                "start_scan_frames": ("INT", {"default": 12, "min": 1, "max": 999999, "step": 1}),
-                "end_scan_frames": ("INT", {"default": 12, "min": 1, "max": 999999, "step": 1}),
-                "max_start_drop": ("INT", {"default": 5, "min": 0, "max": 999999, "step": 1}),
-                "max_end_drop": ("INT", {"default": 3, "min": 0, "max": 999999, "step": 1}),
-                "min_remaining_frames": ("INT", {"default": 16, "min": 2, "max": 999999, "step": 1}),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "low_motion_ratio": ("FLOAT", {"default": 0.60, "min": 0.0, "max": 3.0, "step": 0.05, "display_name": "Low motion sensitivity"}),
+                "start_scan_frames": ("INT", {"default": 12, "min": 1, "max": 999999, "step": 1, "display_name": "Scan start frames"}),
+                "end_scan_frames": ("INT", {"default": 12, "min": 1, "max": 999999, "step": 1, "display_name": "Scan end frames"}),
+                "max_start_drop": ("INT", {"default": 5, "min": 0, "max": 999999, "step": 1, "display_name": "Remove start frames"}),
+                "max_end_drop": ("INT", {"default": 3, "min": 0, "max": 999999, "step": 1, "display_name": "Remove end frames"}),
+                "min_remaining_frames": ("INT", {"default": 16, "min": 2, "max": 999999, "step": 1, "display_name": "Minimum frames left"}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
             }
         }
 
@@ -437,14 +437,14 @@ class ShiroLastFirstContextBridge:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "context_before": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1}),
-                "context_after": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1}),
-                "bridge_frame_count": ("INT", {"default": 1, "min": 0, "max": 16, "step": 1}),
+                "context_before": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1, "display_name": "Context before seam"}),
+                "context_after": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1, "display_name": "Context after seam"}),
+                "bridge_frame_count": ("INT", {"default": 1, "min": 0, "max": 16, "step": 1, "display_name": "Bridge frames"}),
                 "method": (["balanced_anti_first", "balanced", "motion_extrapolated", "catmull_rom", "bezier", "linear"], {"default": "balanced_anti_first"}),
-                "max_first_progress": ("FLOAT", {"default": 0.72, "min": 0.05, "max": 0.98, "step": 0.01}),
-                "anti_first_strength": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.05}),
-                "insert_mode": (["append", "replace_last", "replace_last_and_append"], {"default": "append"}),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "max_first_progress": ("FLOAT", {"default": 0.72, "min": 0.05, "max": 0.98, "step": 0.01, "display_name": "Max progress toward first"}),
+                "anti_first_strength": ("FLOAT", {"default": 0.65, "min": 0.0, "max": 1.0, "step": 0.05, "display_name": "Anti-first strength"}),
+                "insert_mode": (["append", "replace_last", "replace_last_and_append", "replace_first", "replace_both_sides"], {"default": "append"}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
             }
         }
 
@@ -549,11 +549,29 @@ class ShiroLastFirstContextBridge:
         bridge_batch = torch.cat(bridges, dim=0).contiguous() if bridges else images[:0].contiguous()
 
         if insert_mode == "append":
+            # Keep original start/end. Add bridge frame(s) at the end:
+            # ... last, bridge -> first
             out = torch.cat((images, bridge_batch), dim=0).contiguous()
         elif insert_mode == "replace_last":
+            # Replace only the final frame with the last generated bridge frame.
             out = torch.cat((images[:-1], bridge_batch[-1:].contiguous()), dim=0).contiguous()
-        else:  # replace_last_and_append
+        elif insert_mode == "replace_last_and_append":
+            # Remove the original last frame, then append all bridge frames.
             out = torch.cat((images[:-1], bridge_batch), dim=0).contiguous()
+        elif insert_mode == "replace_first":
+            # Remove frame 0 from the start, then append bridge frames at the end.
+            # The player loop becomes bridge -> frame 1 instead of bridge -> frame 0.
+            if n <= 2:
+                out = torch.cat((images, bridge_batch), dim=0).contiguous()
+            else:
+                out = torch.cat((images[1:], bridge_batch), dim=0).contiguous()
+        else:  # replace_both_sides
+            # Remove both boundary frames (-1 and 0), then append bridge frames.
+            # This is the strongest mode for hard seams where both last and first are problematic.
+            if n <= 3:
+                out = torch.cat((images[:-1], bridge_batch), dim=0).contiguous()
+            else:
+                out = torch.cat((images[1:-1], bridge_batch), dim=0).contiguous()
 
         return (out, bridge_batch)
 
@@ -567,11 +585,11 @@ class ShiroLastFirstRIFEContext:
         return {
             "required": {
                 "images": ("IMAGE",),
-                "context_before": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1}),
-                "context_after": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1}),
+                "context_before": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1, "display_name": "Context before seam"}),
+                "context_after": ("INT", {"default": 3, "min": 1, "max": 8, "step": 1, "display_name": "Context after seam"}),
                 "bridge_frame_count": ("INT", {"default": 1, "min": 1, "max": 8, "step": 1}),
-                "rife_multiplier": ("INT", {"default": 4, "min": 2, "max": 16, "step": 1}),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "rife_multiplier": ("INT", {"default": 4, "min": 2, "max": 16, "step": 1, "display_name": "RIFE multiplier"}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
             }
         }
 
@@ -622,14 +640,14 @@ class ShiroAppendRIFEBridgeFrames:
                 "original_images": ("IMAGE",),
                 "rife_context_result": ("IMAGE",),
                 "bridge_frame_count": ("INT", {"default": 1, "min": 1, "max": 8, "step": 1}),
-                "rife_multiplier": ("INT", {"default": 4, "min": 2, "max": 16, "step": 1}),
-                "boundary_segment_index": ("INT", {"default": 2, "min": 0, "max": 32, "step": 1}),
+                "rife_multiplier": ("INT", {"default": 4, "min": 2, "max": 16, "step": 1, "display_name": "RIFE multiplier"}),
+                "boundary_segment_index": ("INT", {"default": 2, "min": 0, "max": 32, "step": 1, "display_name": "Boundary segment index"}),
                 "pick_mode": (["anti_first_bias", "balanced", "prefer_last_side", "middle", "first", "last"], {"default": "anti_first_bias"}),
-                "insert_mode": (["append", "replace_last", "replace_last_and_append"], {"default": "replace_last_and_append"}),
-                "min_distance_from_first": ("FLOAT", {"default": 0.001, "min": 0.0, "max": 0.1, "step": 0.0005}),
-                "max_first_progress": ("FLOAT", {"default": 0.72, "min": 0.05, "max": 0.98, "step": 0.01}),
-                "first_penalty_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 10.0, "step": 0.1}),
-                "enabled": ("BOOLEAN", {"default": True}),
+                "insert_mode": (["append", "replace_last", "replace_last_and_append", "replace_first", "replace_both_sides"], {"default": "replace_last_and_append"}),
+                "min_distance_from_first": ("FLOAT", {"default": 0.001, "min": 0.0, "max": 0.1, "step": 0.0005, "display_name": "Min distance from first"}),
+                "max_first_progress": ("FLOAT", {"default": 0.72, "min": 0.05, "max": 0.98, "step": 0.01, "display_name": "Max progress toward first"}),
+                "first_penalty_strength": ("FLOAT", {"default": 2.0, "min": 0.0, "max": 10.0, "step": 0.1, "display_name": "First-frame penalty"}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
             }
         }
 
@@ -772,15 +790,164 @@ class ShiroAppendRIFEBridgeFrames:
             first_penalty_strength=first_penalty_strength,
         ).to(dtype=original_images.dtype).contiguous()
 
+        original_n = int(original_images.shape[0])
         if insert_mode == "append":
+            # Keep original start/end. Add bridge frame(s) at the end:
+            # ... last, bridge -> first
             out = torch.cat((original_images, bridge), dim=0).contiguous()
         elif insert_mode == "replace_last":
+            # Replace only the final frame with the first selected bridge frame.
             out = torch.cat((original_images[:-1], bridge[:1]), dim=0).contiguous()
             bridge = bridge[:1].contiguous()
-        else:  # replace_last_and_append
+        elif insert_mode == "replace_last_and_append":
+            # Remove the original last frame, then append all selected bridge frames.
             out = torch.cat((original_images[:-1], bridge), dim=0).contiguous()
+        elif insert_mode == "replace_first":
+            # Remove frame 0 from the start, then append bridge frames at the end.
+            # The player loop becomes bridge -> frame 1 instead of bridge -> frame 0.
+            if original_n <= 2:
+                out = torch.cat((original_images, bridge), dim=0).contiguous()
+            else:
+                out = torch.cat((original_images[1:], bridge), dim=0).contiguous()
+        else:  # replace_both_sides
+            # Remove both hard boundary frames: frame -1 and frame 0.
+            # The loop becomes bridge -> frame 1, while the end no longer contains the original last frame.
+            if original_n <= 3:
+                out = torch.cat((original_images[:-1], bridge), dim=0).contiguous()
+            else:
+                out = torch.cat((original_images[1:-1], bridge), dim=0).contiguous()
 
         return (out, bridge)
+
+
+
+
+def _pair_image_similarity(a, b, color_compare=True):
+    """Return mean absolute difference in 0..1 space. Lower means more similar."""
+    a = a.detach().float().cpu()
+    b = b.detach().float().cpu()
+    if bool(color_compare):
+        dims = (0, 1)
+        mean_a = a.mean(dim=dims, keepdim=True)
+        std_a = a.std(dim=dims, unbiased=False, keepdim=True).clamp(min=1e-6)
+        mean_b = b.mean(dim=dims, keepdim=True)
+        std_b = b.std(dim=dims, unbiased=False, keepdim=True).clamp(min=1e-6)
+        b = ((b - mean_b) / std_b) * std_a + mean_a
+        b = b.clamp(0.0, 1.0)
+    return float(torch.mean(torch.abs(a - b)).item())
+
+
+class ShiroPreInterpolationLoopBoundaryCleaner:
+    """Remove duplicated circular boundary frames before interpolation.
+
+    It compares the ending frames against the starting frames around the loop seam:
+    pair 1: last <-> first
+    pair 2: penultimate <-> second
+    pair 3: third-from-end <-> third frame
+    and so on.
+
+    It then tries small start/end removals and chooses the lightest removal that makes
+    the seam pairs less similar than the configured image_similarity threshold.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "images": ("IMAGE",),
+                "compare_pairs": ("INT", {"default": 2, "min": 1, "max": 8, "step": 1, "display_name": "Compare seam pairs"}),
+                "remove_end_frames": ("INT", {"default": 2, "min": 0, "max": 16, "step": 1, "display_name": "Remove end frames"}),
+                "remove_start_frames": ("INT", {"default": 0, "min": 0, "max": 16, "step": 1, "display_name": "Remove start frames"}),
+                "color_compare": ("BOOLEAN", {"default": True, "display_name": "Color compare"}),
+                "image_similarity": ("FLOAT", {"default": 0.018, "min": 0.0, "max": 1.0, "step": 0.001, "display_name": "Image similarity"}),
+                "enabled": ("BOOLEAN", {"default": True, "display_name": "Enabled"}),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT", "FLOAT")
+    RETURN_NAMES = ("images", "end_frames_removed", "start_frames_removed", "closest_pair_similarity")
+    FUNCTION = "clean"
+    CATEGORY = "Shiro Tools/Video Loop"
+
+    def _candidate_scores(self, images, start_remove, end_remove, compare_pairs, color_compare):
+        n = int(images.shape[0])
+        scores = []
+        for pair_idx in range(int(compare_pairs)):
+            end_idx = n - 1 - int(end_remove) - pair_idx
+            start_idx = int(start_remove) + pair_idx
+            if end_idx < 0 or start_idx >= n or end_idx <= start_idx:
+                break
+            scores.append(_pair_image_similarity(images[end_idx], images[start_idx], color_compare=color_compare))
+        return scores
+
+    def clean(
+        self,
+        images,
+        compare_pairs=2,
+        remove_end_frames=2,
+        remove_start_frames=0,
+        color_compare=True,
+        image_similarity=0.018,
+        enabled=True,
+    ):
+        if (not bool(enabled)) or (not torch.is_tensor(images)) or images.dim() != 4:
+            return (images, 0, 0, 0.0)
+
+        n = int(images.shape[0])
+        if n < 2:
+            return (images, 0, 0, 0.0)
+
+        compare_pairs = max(1, int(compare_pairs))
+        remove_end_frames = max(0, int(remove_end_frames))
+        remove_start_frames = max(0, int(remove_start_frames))
+        threshold = float(image_similarity)
+
+        valid_candidates = []
+        fallback_candidates = []
+
+        for end_remove in range(remove_end_frames + 1):
+            for start_remove in range(remove_start_frames + 1):
+                remaining = n - end_remove - start_remove
+                if remaining < 2:
+                    continue
+                scores = self._candidate_scores(images, start_remove, end_remove, compare_pairs, color_compare)
+                if not scores:
+                    continue
+                closest = min(scores)  # lower = more similar = worse
+                average = sum(scores) / len(scores)
+                all_safe = all(score > threshold for score in scores)
+                total_removed = start_remove + end_remove
+                # Prefer end removals slightly over start removals on tie because loop issues are usually at the end.
+                key_valid = (total_removed, start_remove, -closest, -average)
+                key_fallback = (-closest, -average, total_removed, start_remove)
+                entry = {
+                    "start_remove": start_remove,
+                    "end_remove": end_remove,
+                    "closest": closest,
+                    "average": average,
+                    "scores": scores,
+                    "key_valid": key_valid,
+                    "key_fallback": key_fallback,
+                }
+                if all_safe:
+                    valid_candidates.append(entry)
+                fallback_candidates.append(entry)
+
+        if valid_candidates:
+            chosen = sorted(valid_candidates, key=lambda x: x["key_valid"])[0]
+        elif fallback_candidates:
+            chosen = sorted(fallback_candidates, key=lambda x: x["key_fallback"])[0]
+        else:
+            return (images, 0, 0, 0.0)
+
+        start_remove = int(chosen["start_remove"])
+        end_remove = int(chosen["end_remove"])
+        if end_remove > 0:
+            cleaned = images[start_remove:n - end_remove]
+        else:
+            cleaned = images[start_remove:]
+        cleaned = cleaned.contiguous()
+        return (cleaned, end_remove, start_remove, float(chosen["closest"]))
 
 
 NODE_CLASS_MAPPINGS = {
@@ -792,6 +959,7 @@ NODE_CLASS_MAPPINGS = {
     "ShiroLastFirstContextBridge": ShiroLastFirstContextBridge,
     "ShiroLastFirstRIFEContext": ShiroLastFirstRIFEContext,
     "ShiroAppendRIFEBridgeFrames": ShiroAppendRIFEBridgeFrames,
+    "ShiroPreInterpolationLoopBoundaryCleaner": ShiroPreInterpolationLoopBoundaryCleaner,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -799,8 +967,9 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ShiroPassthroughDelay": "Passthrough Workflow Delay (Shiro)",
     "ShiroAutoSeamLoopCut": "Auto Seam Loop Cut (Shiro)",
     "ShiroMotionDeStutterLoopCleaner": "Motion De-Stutter Loop Cleaner (Shiro)",
-    "ShiroBoundaryDeStutterLoopCleaner": "Boundary De-Stutter Loop Cleaner (Shiro)",
-    "ShiroLastFirstContextBridge": "Last-First Context Bridge Advanced (Shiro)",
+    "ShiroBoundaryDeStutterLoopCleaner": "Boundary De-Stutter Cleaner (Shiro)",
+    "ShiroLastFirstContextBridge": "Last/First Bridge - No Model (Shiro)",
     "ShiroLastFirstRIFEContext": "Last-First RIFE Context (Shiro)",
-    "ShiroAppendRIFEBridgeFrames": "Append RIFE Bridge Frames (Shiro)",
+    "ShiroAppendRIFEBridgeFrames": "Apply RIFE Bridge Frames (Shiro)",
+    "ShiroPreInterpolationLoopBoundaryCleaner": "Pre-Interpolation Boundary Cleaner (Shiro)",
 }

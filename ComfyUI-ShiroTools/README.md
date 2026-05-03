@@ -71,3 +71,32 @@ Recommended first test:
 - max_first_progress = 0.72
 - first_penalty_strength = 2.0
 - insert_mode = replace_last_and_append
+
+
+## v11 - Replace first / replace both sides modes
+
+The Last-First bridge nodes now support two stronger insert modes:
+
+- `replace_first`: removes frame 0 from the beginning and appends bridge frame(s) at the end. The loop closes from bridge -> frame 1 instead of bridge -> frame 0.
+- `replace_both_sides`: removes both frame -1 and frame 0, then appends bridge frame(s). This is useful when both sides of the loop seam are visibly problematic.
+
+Recommended test for hard seams:
+- `bridge_frame_count = 3`
+- `insert_mode = replace_both_sides`
+
+If timing becomes too altered, go back to `replace_last_and_append` or `append`.
+
+
+## Pre-Interpolation Loop Boundary Cleaner (Shiro)
+This node checks the loop seam before interpolation. It compares the last frame against the first frame, the penultimate frame against the second frame, and so on, up to the configured compare_pairs value. It can automatically remove a few frames from the end and/or beginning when the seam is too similar.
+
+Recommended start:
+- compare_pairs = 2
+- remove_end_frames = 2
+- remove_start_frames = 0
+- color_compare = true
+- image_similarity = 0.018
+
+
+## v12.3 display-name cleanup
+Only user-facing labels were clarified. Internal class names, parameter names, and function behavior were kept unchanged to avoid breaking existing workflows.

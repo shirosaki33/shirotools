@@ -1472,6 +1472,13 @@ class ShiroExportGlobalConfig:
         return highest_number + 1
 
     def setup(self, output_folder, prefix):
+        from datetime import datetime
+        
+        # Traduz a tag para a data atual (Ex: 2026-06-29)
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        output_folder = output_folder.replace("%date:yyyy-MM-dd%", hoje)
+        output_folder = output_folder.replace("%date%", hoje)
+
         full_path = os.path.join(self.output_dir, output_folder)
         os.makedirs(full_path, exist_ok=True)
         counter = self.calculate_next_counter(full_path)
@@ -1524,8 +1531,9 @@ class ShiroSaveExportLinked:
                 file_path = os.path.join(full_path, filename)
                 
             if format == "PNG":
-                # Converte o slider de 1 a 100 para compress_level de 0 a 9 do PNG
-                png_compress = max(0, min(9, round((quality / 100.0) * 9)))
+                # Inversão matemática: Slider 100 = Compressão 0 (Gigante). Slider 1 = Compressão 9 (Leve).
+                png_compress = max(0, min(9, round(9 - ((quality / 100.0) * 9))))
+                
                 if save_png_metadata:
                     from PIL.PngImagePlugin import PngInfo
                     metadata = PngInfo()
@@ -1588,6 +1596,13 @@ class SaveExportA1111:
         return highest_number + 1
 
     def save_image(self, images, output_folder, prefix, endfix, format, quality, save_png_metadata, disable_counter=False, prompt=None, extra_pnginfo=None):
+        from datetime import datetime
+        
+        # Traduz a tag para a data atual (Ex: 2026-06-29)
+        hoje = datetime.now().strftime("%Y-%m-%d")
+        output_folder = output_folder.replace("%date:yyyy-MM-dd%", hoje)
+        output_folder = output_folder.replace("%date%", hoje)
+
         full_path = os.path.join(self.output_dir, output_folder)
         os.makedirs(full_path, exist_ok=True)
         if not disable_counter: counter = self.calculate_next_counter(full_path)
@@ -1608,8 +1623,9 @@ class SaveExportA1111:
                     file_path = os.path.join(full_path, filename)
 
             if format == "PNG":
-                # Converte o slider de 1 a 100 para compress_level de 0 a 9 do PNG
-                png_compress = max(0, min(9, round((quality / 100.0) * 9)))
+                # Inversão matemática: Slider 100 = Compressão 0 (Gigante). Slider 1 = Compressão 9 (Leve).
+                png_compress = max(0, min(9, round(9 - ((quality / 100.0) * 9))))
+                
                 if save_png_metadata:
                     from PIL.PngImagePlugin import PngInfo
                     metadata = PngInfo()

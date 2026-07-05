@@ -8,6 +8,7 @@ import torch.nn.functional as F
 import numpy as np
 from PIL import Image
 import folder_paths
+import comfy.utils
 
 # ---------------------------------------------------------------------------
 # SHIRO TOOLS: TIMING
@@ -1407,6 +1408,137 @@ class ShiroWatermark:
         return (result,)
 
 
+class ShiroHiresFixLatent:
+    """HiresFix apenas para LATENT: upscale correto (nearest múltiplo de 8/16/32/64) + escala de máscara.
+    Suporta latents de imagem 4D [B,C,H,W] e latents de vídeo 5D [B,C,T,H,W] (ex: WanVAE)."""
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "scale_factor": ("FLOAT", {
+                    "default": 1.5,
+                    "min": 0.1,
+                    "max": 10.0,
+                    "step": 0.01,
+                    "display": "number"
+                }),
+                "upscale_method": (["nearest-exact", "bilinear", "area", "bicubic", "bislerp"],),
+                "round_to_multiple": ([8, 16, 32, 64], {
+                    "default": 8
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT", "INT", "INT")
+    RETURN_NAMES = ("latent", "pixel_width", "pixel_height")
+    FUNCTION = "do_upscale"
+    CATEGORY = "Shiro Tools/Image"
+
+    def do_upscale(self, latent, scale_factor, upscale_method, round_to_multiple=8):
+        l_samples = latent["samples"]
+        ndim = l_samples.dim()
+
+        # Latents de vídeo (ex: WanVAE) vêm em 5D: [B, C, T, H, W].
+        # Latents de imagem (SD/SDXL/Flux) vêm em 4D: [B, C, H, W].
+        # Em ambos os casos, altura e largura são sempre as DUAS ÚLTIMAS dimensões.
+        if ndim == 5:
+            b, c, t, h, w = l_samples.shape
+        else:
+            h, w = l_samples.shape[2], l_samples.shape[3]
+
+        orig_pixel_height = h * 8
+        orig_pixel_width = w * 8
+
+        raw_width = orig_pixel_width * scale_factor
+        raw_height = orig_pixel_height * scale_factor
+
+        # TRAVA DE SEGURANÇA: arredonda pro múltiplo escolhido (8 é suficiente
+        # pra SDXL/Flux; use 64 apenas se seu modelo exigir, ex: SD1.5 legado)
+        m = round_to_multiple
+        pixel_width = max(m, int(round(raw_width / m)) * m)
+        pixel_height = max(m, int(round(raw_height / m)) * m)
+
+        l_new_width = pixel_width // 8
+        l_new_height = pixel_height // 8
+
+        if ndim == 5:
+            samples_4d = l_samples.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+            upscaled_4d = comfy.utils.common_upscale(samples_4d, l_new_width, l_new_height, upscale_method, "disabled")
+            upscaled_latent = upscaled_4d.reshape(b, t, c, l_new_height, l_new_width).permute(0, 2, 1, 3, 4)
+        else:
+            upscaled_latent = comfy.utils.common_upscale(l_samples, l_new_width, l_new_height, upscale_method, "disabled")
+
+        new_latent = latent.copy()
+        new_latent["samples"] = upscaled_latent
+
+        if "noise_mask" in latent:
+            mask = latent["noise_mask"]
+            orig_ndim = len(mask.shape)
+
+            if orig_ndim == 3:
+                mask4d = mask.unsqueeze(1)
+            elif orig_ndim == 2:
+                mask4d = mask.unsqueeze(0).unsqueeze(0)
+            else:
+                mask4d = mask
+
+            upscaled_mask = comfy.utils.common_upscale(mask4d, l_new_width, l_new_height, "bilinear", "disabled")
+
+            if orig_ndim == 3:
+                new_latent["noise_mask"] = upscaled_mask.squeeze(1)
+            elif orig_ndim == 2:
+                new_latent["noise_mask"] = upscaled_mask.squeeze(0).squeeze(0)
+            else:
+                new_latent["noise_mask"] = upscaled_mask
+
+        return (new_latent, pixel_width, pixel_height)
+
+
+class ShiroHiresFixImage:
+    """HiresFix apenas para IMAGE: upscale correto arredondado pro múltiplo de 8/16/32/64."""
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "image": ("IMAGE",),
+                "scale_factor": ("FLOAT", {
+                    "default": 1.5,
+                    "min": 0.1,
+                    "max": 10.0,
+                    "step": 0.01,
+                    "display": "number"
+                }),
+                "upscale_method": (["nearest-exact", "bilinear", "area", "bicubic" ,"lanczos"],),
+                "round_to_multiple": ([8, 16, 32, 64], {
+                    "default": 8
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("IMAGE", "INT", "INT")
+    RETURN_NAMES = ("image", "width", "height")
+    FUNCTION = "do_upscale"
+    CATEGORY = "Shiro Tools/Image"
+
+    def do_upscale(self, image, scale_factor, upscale_method, round_to_multiple=8):
+        orig_width = image.shape[2]
+        orig_height = image.shape[1]
+
+        raw_width = orig_width * scale_factor
+        raw_height = orig_height * scale_factor
+
+        m = round_to_multiple
+        pixel_width = max(m, int(round(raw_width / m)) * m)
+        pixel_height = max(m, int(round(raw_height / m)) * m)
+
+        img_samples = image.movedim(-1, 1)
+        upscaled_img = comfy.utils.common_upscale(img_samples, pixel_width, pixel_height, upscale_method, "disabled")
+        upscaled_img = upscaled_img.movedim(1, -1)
+
+        return (upscaled_img, pixel_width, pixel_height)
+
+
 class StandaloneResolutionScaler:
     @classmethod
     def INPUT_TYPES(cls):
@@ -1432,6 +1564,79 @@ class StandaloneResolutionScaler:
         final_w = int(w * scale_factor)
         final_h = int(h * scale_factor)
         return (final_w, final_h, scale_factor)
+
+
+class ShiroResolutionScalerLatent:
+    """Equivalente ao Resolution Scaler, mas lendo a resolução a partir de um LATENT
+    em vez de uma IMAGE. Suporta latents de imagem 4D e de vídeo 5D (ex: WanVAE)."""
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "latent": ("LATENT",),
+                "scale_factor": ("FLOAT", {
+                    "default": 1.0,
+                    "min": 0.01,
+                    "max": 10.0,
+                    "step": 0.01
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT", "FLOAT")
+    RETURN_NAMES = ("scaled_width", "scaled_height", "scale_factor")
+    FUNCTION = "calculate"
+    CATEGORY = "Shiro Tools/Tools"
+
+    def calculate(self, latent, scale_factor):
+        l_samples = latent["samples"]
+        # Altura/largura são sempre as duas últimas dimensões, tanto em
+        # latents de imagem [B,C,H,W] quanto de vídeo [B,C,T,H,W].
+        h, w = l_samples.shape[-2], l_samples.shape[-1]
+        base_w = w * 8
+        base_h = h * 8
+        final_w = int(base_w * scale_factor)
+        final_h = int(base_h * scale_factor)
+        return (final_w, final_h, scale_factor)
+
+
+class ShiroAdvancedDenoiseMath:
+    """Calcula steps/start_at_step/end_at_step a partir de steps_to_run + denoise,
+    replicando a mesma matemática que o KSampler comum usa internamente pro
+    parâmetro denoise. Pensado pra alimentar um KSamplerAdvanced (add_noise=disable)."""
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "steps_to_run": ("INT", {
+                    "default": 20,
+                    "min": 1,
+                    "max": 10000,
+                    "step": 1,
+                }),
+                "denoise": ("FLOAT", {
+                    "default": 0.40,
+                    "min": 0.0,
+                    "max": 1.0,
+                    "step": 0.01
+                }),
+            }
+        }
+
+    RETURN_TYPES = ("INT", "INT", "INT")
+    RETURN_NAMES = ("steps", "start_at_step", "end_at_step")
+    FUNCTION = "calc_steps"
+    CATEGORY = "Shiro Tools/Tools"
+
+    def calc_steps(self, steps_to_run, denoise):
+        if denoise <= 0.0:
+            return (steps_to_run, steps_to_run, steps_to_run)
+
+        total_steps = max(1, int(steps_to_run / max(0.01, denoise)))
+        start_at_step = total_steps - steps_to_run
+        end_at_step = total_steps
+
+        return (total_steps, start_at_step, end_at_step)
 
 
 # ---------------------------------------------------------------------------
@@ -1803,6 +2008,174 @@ class ShiroAudioSelector8:
 
 
 # ---------------------------------------------------------------------------
+# SHIRO TOOLS: TEXT
+# ---------------------------------------------------------------------------
+# Equivalente ao "Conditioning (Combine)" nativo do ComfyUI, mas para STRING.
+# string_1 e sempre obrigatorio (com widget de texto). string_2..8 sao
+# opcionais e so entram no resultado se estiverem CONECTADOS (forceInput,
+# entao se nao tiver fio ligado chega como None e e ignorado).
+#
+# "insert_break": se True, TODOS os segmentos conectados sao unidos com
+# " BREAK " (com espacos, pra virar uma palavra isolada de verdade) em vez
+# do "separator" normal. Isso NAO faz o CLIP tratar BREAK de forma especial
+# por si so - depende de voce estar usando um node de encode que reconhece
+# o literal "BREAK" (ex: CLIPTextEncodeBREAK do ComfyUI-ppm). O
+# CLIPTextEncode nativo do ComfyUI NAO reconhece BREAK - trata como texto
+# comum.
+
+class ShiroStringCombine:
+    @classmethod
+    def INPUT_TYPES(cls):
+        required = {
+            "string_1": ("STRING", {"default": "", "multiline": True}),
+            "separator": ("STRING", {"default": " ", "multiline": False}),
+            "insert_break": ("BOOLEAN", {"default": False}),
+        }
+        optional = {}
+        for i in range(2, 9):
+            optional[f"string_{i}"] = ("STRING", {"forceInput": True})
+        return {"required": required, "optional": optional}
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("string",)
+    FUNCTION = "combine"
+    CATEGORY = "Shiro Tools/Text"
+
+    def combine(self, string_1="", separator=" ", insert_break=False,
+                string_2=None, string_3=None, string_4=None, string_5=None,
+                string_6=None, string_7=None, string_8=None):
+        sep = " BREAK " if bool(insert_break) else ("" if separator is None else str(separator))
+        values = [string_1, string_2, string_3, string_4, string_5, string_6, string_7, string_8]
+        parts = [str(v) for v in values if v is not None]
+        return (sep.join(parts),)
+
+
+# ---------------------------------------------------------------------------
+# SHIRO TOOLS: FLOW CONTROL
+# ---------------------------------------------------------------------------
+# Boolean Validator: aceita qualquer coisa e so deixa passar True/False de
+# verdade. Qualquer outra coisa (None, 0, string, ou o "vazio" que sobra
+# quando um node BOOLEAN sem entrada e colocado em Bypass) vira False
+# automaticamente. Serve pra blindar os toggles de enabled_N dos switches
+# abaixo contra Bypass acidental.
+#
+# Stage Switch 8 (LATENT / IMAGE / MODEL / ANY): 8 pares fixos de entrada +
+# enabled. slot_1 e sempre obrigatorio/ativo (sem toggle, e a base). Os
+# slots 2-8 sao opcionais, cada um com seu proprio enabled_N. A selecao
+# varre de tras pra frente (8 -> 1) e retorna o PRIMEIRO slot conectado E
+# habilitado que encontrar - nao exige sequencia continua (ex: pode ligar
+# so o slot 1 e o 3, ignorando o 2, que funciona normalmente).
+# O index de saida e a posicao do slot vencedor, comecando em 0
+# (slot_1 -> 0, slot_2 -> 1, ..., slot_8 -> 7).
+
+class ShiroBooleanValidator:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {},
+            # "anything" precisa ser OPCIONAL, nao required. Se o node
+            # upstream (ex: um BOOLEAN sem nenhuma entrada) for colocado em
+            # Bypass, o ComfyUI remove a conexao do grafo por inteiro (nao
+            # tem de onde "puxar" o valor). Se fosse required, isso quebra
+            # a validacao do prompt inteiro com "Required input is
+            # missing". Sendo opcional, a funcao so recebe None.
+            "optional": {
+                "anything": ("*",),
+            },
+        }
+
+    RETURN_TYPES = ("BOOLEAN",)
+    RETURN_NAMES = ("boolean",)
+    FUNCTION = "validate"
+    CATEGORY = "Shiro Tools/Flow Control"
+
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        return float("nan")
+
+    def validate(self, anything=None):
+        # so aceita bool de verdade (True/False). isinstance(1, bool) e
+        # False em Python, entao inteiros/strings/None/etc caem no else.
+        if isinstance(anything, bool):
+            return (anything,)
+        return (False,)
+
+
+class _ShiroStageSwitch8Base:
+    TYPE_NAME = "*"
+    SLOT_PREFIX = "anything"
+    NUM_SLOTS = 8
+
+    # fixos, sem widget - nao aparecem na interface
+    START_VALUE = 0
+    STEP = 1
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        required = {
+            f"{cls.SLOT_PREFIX}_1": (cls.TYPE_NAME,),
+        }
+        optional = {}
+        for i in range(2, cls.NUM_SLOTS + 1):
+            optional[f"{cls.SLOT_PREFIX}_{i}"] = (cls.TYPE_NAME,)
+            optional[f"enabled_{i}"] = ("BOOLEAN", {"default": True})
+        return {"required": required, "optional": optional}
+
+    FUNCTION = "switch"
+    CATEGORY = "Shiro Tools/Flow Control"
+
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        return float("nan")
+
+    def switch(self, **kwargs):
+        prefix = self.SLOT_PREFIX
+        n = self.NUM_SLOTS
+        values = [kwargs.get(f"{prefix}_{i}") for i in range(1, n + 1)]
+        # posicao 0 (slot_1) e sempre ativa; slots 2..N dependem do enabled_i
+        enabled_flags = [True] + [bool(kwargs.get(f"enabled_{i}", True)) for i in range(2, n + 1)]
+
+        selected_value = values[0]
+        selected_index = 0
+        for i in range(n - 1, 0, -1):  # de tras pra frente, para no indice 0 (fallback)
+            if enabled_flags[i] and values[i] is not None:
+                selected_value = values[i]
+                selected_index = i
+                break
+
+        index = self.START_VALUE + self.STEP * selected_index
+        return (selected_value, int(index))
+
+
+class ShiroStageSwitch8Latent(_ShiroStageSwitch8Base):
+    TYPE_NAME = "LATENT"
+    SLOT_PREFIX = "latent"
+    RETURN_TYPES = ("LATENT", "INT")
+    RETURN_NAMES = ("latent", "index")
+
+
+class ShiroStageSwitch8Image(_ShiroStageSwitch8Base):
+    TYPE_NAME = "IMAGE"
+    SLOT_PREFIX = "image"
+    RETURN_TYPES = ("IMAGE", "INT")
+    RETURN_NAMES = ("image", "index")
+
+
+class ShiroStageSwitch8Model(_ShiroStageSwitch8Base):
+    TYPE_NAME = "MODEL"
+    SLOT_PREFIX = "model"
+    RETURN_TYPES = ("MODEL", "INT")
+    RETURN_NAMES = ("model", "index")
+
+
+class ShiroStageSwitch8Any(_ShiroStageSwitch8Base):
+    TYPE_NAME = "*"
+    SLOT_PREFIX = "anything"
+    RETURN_TYPES = ("*", "INT")
+    RETURN_NAMES = ("anything", "index")
+
+
+# ---------------------------------------------------------------------------
 # MAPPINGS
 # ---------------------------------------------------------------------------
 
@@ -1826,7 +2199,11 @@ NODE_CLASS_MAPPINGS = {
     # Shiro Tools Image / Geral
     "ShiroLoadWatermark": ShiroLoadWatermark,
     "ShiroWatermark": ShiroWatermark,
+    "ShiroHiresFixLatent": ShiroHiresFixLatent,
+    "ShiroHiresFixImage": ShiroHiresFixImage,
     "StandaloneResolutionScaler": StandaloneResolutionScaler,
+    "ShiroResolutionScalerLatent": ShiroResolutionScalerLatent,
+    "ShiroAdvancedDenoiseMath": ShiroAdvancedDenoiseMath,
     
     # Shiro Tools Export
     "ShiroExportGlobalConfig": ShiroExportGlobalConfig,
@@ -1837,6 +2214,16 @@ NODE_CLASS_MAPPINGS = {
     "ShiroTrimLeadingSilence": ShiroTrimLeadingSilence,
     "ShiroLimitLongSilence": ShiroLimitLongSilence,
     "ShiroAudioSelector8": ShiroAudioSelector8,
+    
+    # Shiro Tools Text
+    # "ShiroStringCombine": ShiroStringCombine,  # DESATIVADO PRA TESTE
+    
+    # Shiro Tools Flow Control
+    "ShiroBooleanValidator": ShiroBooleanValidator,
+    "ShiroStageSwitch8Latent": ShiroStageSwitch8Latent,
+    "ShiroStageSwitch8Image": ShiroStageSwitch8Image,
+    "ShiroStageSwitch8Model": ShiroStageSwitch8Model,
+    "ShiroStageSwitch8Any": ShiroStageSwitch8Any,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -1859,7 +2246,11 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # Shiro Tools Image / Geral
     "ShiroLoadWatermark": "Load Watermark",
     "ShiroWatermark": "Watermark",
-    "StandaloneResolutionScaler": "Resolution Scaler",
+    "ShiroHiresFixLatent": "HiresFix Latent (Shiro)",
+    "ShiroHiresFixImage": "HiresFix Image (Shiro)",
+    "StandaloneResolutionScaler": "Resolution Scaler (Image)",
+    "ShiroResolutionScalerLatent": "Resolution Scaler (Latent)",
+    "ShiroAdvancedDenoiseMath": "Advanced Denoise Math (Shiro)",
     
     # Shiro Tools Export
     "ShiroExportGlobalConfig": "Export Global Config (Shiro)",
@@ -1870,4 +2261,14 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ShiroTrimLeadingSilence": "Trim Leading Silence (Shiro)",
     "ShiroLimitLongSilence": "Limit Long Silence (Shiro)",
     "ShiroAudioSelector8": "Audio Selector 8 Slots (Shiro)",
+    
+    # Shiro Tools Text
+    # "ShiroStringCombine": "String Combine (Shiro)",  # DESATIVADO PRA TESTE
+    
+    # Shiro Tools Flow Control
+    "ShiroBooleanValidator": "Boolean Validator (Shiro)",
+    "ShiroStageSwitch8Latent": "Stage Switch 8 - LATENT (Shiro)",
+    "ShiroStageSwitch8Image": "Stage Switch 8 - IMAGE (Shiro)",
+    "ShiroStageSwitch8Model": "Stage Switch 8 - MODEL (Shiro)",
+    "ShiroStageSwitch8Any": "Stage Switch 8 - ANY (Shiro)",
 }

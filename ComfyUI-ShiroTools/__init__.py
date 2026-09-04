@@ -12,8 +12,14 @@ MODULES = [
     "image_tools",
     "exports",
     "tools",
-    "controls"
+    "controls",
+    "novelai",
+    "shiro_test",
+    "shiro_test2",
+    "shiro_test3",
 ]
+
+WEB_DIRECTORY = "./web"
 
 # Carrega todos os módulos da lista e avisa no terminal se faltar algum
 for module_name in MODULES:
@@ -47,4 +53,4 @@ try:
 except Exception as e:
     print(f"\033[93m[Shiro Tools] Aviso: Não foi possível aplicar o Monkey-Patch: {e}\033[0m")
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
